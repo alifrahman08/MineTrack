@@ -1,0 +1,598 @@
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMINISTRATOR
+  SUPERVISOR
+  OPERATOR
+  MANAGEMENT
+}
+
+enum EquipmentType {
+  EXCAVATOR
+  DUMP_TRUCK
+  BULLDOZER
+  WHEEL_LOADER
+  GRADER
+  OTHER
+}
+
+enum EquipmentStatus {
+  AVAILABLE
+  IN_USE
+  MAINTENANCE
+  BREAKDOWN
+  INACTIVE
+}
+
+enum MeasurementType {
+  WEIGHED
+  RITASE
+}
+
+enum ApprovalStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  NEEDS_REVISION
+}
+
+enum DowntimeCategory {
+  MECHANICAL
+  ELECTRICAL
+  OPERATIONAL
+  WAITING_MATERIAL
+  WEATHER
+  OTHER
+}
+
+enum PriorityLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum SafetyCategory {
+  INCIDENT
+  NEAR_MISS
+  UNSAFE_CONDITION
+  UNSAFE_ACTION
+  INSPECTION_FINDING
+}
+
+enum IncidentStatus {
+  OPEN
+  UNDER_INVESTIGATION
+  ACTION_REQUIRED
+  RESOLVED
+  CLOSED
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         Role     @default(OPERATOR)
+  phone        String?
+  avatarUrl    String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  siteAccesses       UserSiteAccess[]
+  createdRecords     ProductionRecord[]       @relation("CreatedBy")
+  reviewedRecords    ProductionRecord[]       @relation("ReviewedBy")
+  assignedShifts     ShiftAssignment[]        @relation("AssignedOperator")
+  supervisedShifts   ShiftAssignment[]        @relation("AssignedSupervisor")
+  createdDailyReports DailyOperationalReport[] @relation("ReportCreator")
+  approvedDailyReports DailyOperationalReport[] @relation("ReportApprover")
+  reportedSafety     SafetyIncident[]         @relation("SafetyReporter")
+  assignedSafety     SafetyIncident[]         @relation("SafetyAssignee")
+  reportedDowntimes  DowntimeReport[]         @relation("DowntimeReporter")
+  handledDowntimes   DowntimeReport[]         @relation("DowntimeHandler")
+  notifications      Notification[]
+  auditLogs          AuditLog[]
+  statusHistories    ProductionStatusHistory[]
+}
+
+model UserSiteAccess {
+  id        String   @id @default(uuid())
+  userId    String
+  siteId    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, siteId])
+}
+
+model Site {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  location    String
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  pits               Pit[]
+  workBlocks         WorkBlock[]
+  equipment          Equipment[]
+  productionRecords  ProductionRecord[]
+  productionTargets  ProductionTarget[]
+  shiftAssignments   ShiftAssignment[]
+  dailyReports       DailyOperationalReport[]
+  safetyIncidents    SafetyIncident[]
+  downtimes          DowntimeReport[]
+  userAccesses       UserSiteAccess[]
+}
+
+model Pit {
+  id        String   @id @default(uuid())
+  siteId    String
+  code      String
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  site              Site               @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  workBlocks        WorkBlock[]
+  productionRecords ProductionRecord[]
+
+  @@unique([siteId, code])
+}
+
+model WorkBlock {
+  id        String   @id @default(uuid())
+  pitId     String
+  siteId    String
+  code      String
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  pit               Pit                @relation(fields: [pitId], references: [id], onDelete: Cascade)
+  site              Site               @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  productionRecords ProductionRecord[]
+
+  @@unique([pitId, code])
+}
+
+model Material {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  unit        String   @default("Ton")
+  density     Float?
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  productionRecords ProductionRecord[]
+  productionTargets ProductionTarget[]
+}
+
+model Shift {
+  id              String   @id @default(uuid())
+  code            String   @unique
+  name            String
+  startTime       String
+  endTime         String
+  crossesMidnight Boolean  @default(false)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  productionRecords   ProductionRecord[]
+  shiftAssignments    ShiftAssignment[]
+  dailyReports        DailyOperationalReport[]
+  downtimes           DowntimeReport[]
+  productionTargets   ProductionTarget[]
+}
+
+model ShiftAssignment {
+  id           String   @id @default(uuid())
+  date         DateTime
+  shiftId      String
+  siteId       String
+  operatorId   String
+  supervisorId String?
+  equipmentId  String?
+  status       String   @default("SCHEDULED")
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  shift      Shift      @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  site       Site       @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  operator   User       @relation("AssignedOperator", fields: [operatorId], references: [id], onDelete: Cascade)
+  supervisor User?      @relation("AssignedSupervisor", fields: [supervisorId], references: [id])
+  equipment  Equipment? @relation(fields: [equipmentId], references: [id])
+
+  @@index([date, siteId, shiftId])
+}
+
+model Equipment {
+  id                  String          @id @default(uuid())
+  code                String          @unique
+  name                String
+  type                EquipmentType
+  model               String
+  siteId              String
+  status              EquipmentStatus @default(AVAILABLE)
+  operatingHours      Float           @default(0)
+  lastMaintenanceDate DateTime?
+  nextMaintenanceDate DateTime?
+  conditionNotes      String?
+  isActive            Boolean         @default(true)
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  site               Site                 @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  productionRecords  ProductionRecord[]
+  downtimeReports    DowntimeReport[]
+  maintenanceRecords MaintenanceRecord[]
+  shiftAssignments   ShiftAssignment[]
+  usageLogs          EquipmentUsageLog[]
+}
+
+model EquipmentUsageLog {
+  id             String   @id @default(uuid())
+  equipmentId    String
+  date           DateTime
+  shiftId        String
+  startHourMeter Float
+  endHourMeter   Float
+  fuelUsed       Float?
+  notes          String?
+  createdAt      DateTime @default(now())
+
+  equipment Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+}
+
+model DowntimeReport {
+  id              String           @id @default(uuid())
+  equipmentId     String
+  siteId          String
+  shiftId         String?
+  reportedById    String
+  handledById     String?
+  startTime       DateTime
+  endTime         DateTime?
+  durationMinutes Int?
+  category        DowntimeCategory
+  priority        PriorityLevel    @default(MEDIUM)
+  description     String
+  actionTaken     String?
+  status          String           @default("OPEN")
+  photoUrl        String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  equipment  Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  site       Site      @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  shift      Shift?    @relation(fields: [shiftId], references: [id])
+  reportedBy User      @relation("DowntimeReporter", fields: [reportedById], references: [id], onDelete: Cascade)
+  handledBy  User?     @relation("DowntimeHandler", fields: [handledById], references: [id])
+}
+
+model MaintenanceRecord {
+  id             String    @id @default(uuid())
+  equipmentId    String
+  type           String
+  startDate      DateTime
+  completionDate DateTime?
+  cost           Decimal?
+  technicianName String
+  notes          String
+  status         String    @default("COMPLETED")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  equipment Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+}
+
+model ProductionTarget {
+  id           String   @id @default(uuid())
+  siteId       String
+  materialId   String
+  periodType   String   @default("DAILY")
+  startDate    DateTime
+  endDate      DateTime
+  shiftId      String?
+  targetAmount Decimal
+  unit         String   @default("Ton")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  site     Site      @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  material Material  @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  shift    Shift?    @relation(fields: [shiftId], references: [id])
+}
+
+model ProductionRecord {
+  id              String          @id @default(uuid())
+  recordNumber    String          @unique
+  date            DateTime
+  siteId          String
+  pitId           String
+  workBlockId     String?
+  shiftId         String
+  materialId      String
+  equipmentId     String?
+  operatorId      String
+  measurementType MeasurementType @default(WEIGHED)
+  ritaseCount     Int             @default(1)
+  grossWeight     Decimal?
+  tareWeight      Decimal?
+  netWeight       Decimal
+  unit            String          @default("Ton")
+  isEstimated     Boolean         @default(false)
+  startTime       String?
+  endTime         String?
+  notes           String?
+  photoUrl        String?
+  status          ApprovalStatus  @default(DRAFT)
+  rejectionReason String?
+  reviewedById    String?
+  reviewedAt      DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  site            Site                      @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  pit             Pit                       @relation(fields: [pitId], references: [id], onDelete: Cascade)
+  workBlock       WorkBlock?                @relation(fields: [workBlockId], references: [id])
+  shift           Shift                     @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  material        Material                  @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  equipment       Equipment?                @relation(fields: [equipmentId], references: [id])
+  operator        User                      @relation("CreatedBy", fields: [operatorId], references: [id], onDelete: Cascade)
+  reviewedBy      User?                     @relation("ReviewedBy", fields: [reviewedById], references: [id])
+  statusHistories ProductionStatusHistory[]
+
+  @@index([date, siteId, shiftId, status])
+  @@index([recordNumber])
+}
+
+model ProductionStatusHistory {
+  id                 String         @id @default(uuid())
+  productionRecordId String
+  changedById        String
+  previousStatus     ApprovalStatus
+  newStatus          ApprovalStatus
+  reason             String?
+  createdAt          DateTime       @default(now())
+
+  productionRecord ProductionRecord @relation(fields: [productionRecordId], references: [id], onDelete: Cascade)
+  changedBy        User             @relation(fields: [changedById], references: [id], onDelete: Cascade)
+}
+
+model DailyOperationalReport {
+  id                   String         @id @default(uuid())
+  reportNumber         String         @unique
+  date                 DateTime
+  siteId               String
+  shiftId              String
+  createdById          String
+  approvedById         String?
+  summary              String
+  actualProduction     Decimal
+  targetProduction     Decimal
+  weather              String?
+  downtimeMinutes      Int            @default(0)
+  safetyIssuesCount    Int            @default(0)
+  operationalObstacles String?
+  followUpPlan         String?
+  photoUrl             String?
+  status               ApprovalStatus @default(DRAFT)
+  rejectionReason      String?
+  approvedAt           DateTime?
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  site       Site   @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  shift      Shift  @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  createdBy  User   @relation("ReportCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  approvedBy User?  @relation("ReportApprover", fields: [approvedById], references: [id])
+
+  @@index([date, siteId, shiftId])
+}
+
+model SafetyIncident {
+  id             String         @id @default(uuid())
+  incidentNumber String         @unique
+  dateTime       DateTime
+  siteId         String
+  location       String
+  category       SafetyCategory
+  severity       PriorityLevel  @default(MEDIUM)
+  description    String
+  initialAction  String
+  reportedById   String
+  assignedToId   String?
+  photoUrl       String?
+  status         IncidentStatus @default(OPEN)
+  resolvedAt     DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  site         Site             @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  reportedBy   User             @relation("SafetyReporter", fields: [reportedById], references: [id], onDelete: Cascade)
+  assignedTo   User?            @relation("SafetyAssignee", fields: [assignedToId], references: [id])
+  followUps    SafetyFollowUp[]
+
+  @@index([siteId, severity, status])
+}
+
+model SafetyFollowUp {
+  id                String   @id @default(uuid())
+  incidentId        String
+  actionDescription String
+  actionBy          String
+  status            String   @default("COMPLETED")
+  createdAt         DateTime @default(now())
+
+  incident SafetyIncident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  title     String
+  message   String
+  type      String   @default("INFO")
+  link      String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String?
+  userEmail  String?
+  action     String
+  entityType String
+  entityId   String?
+  details    String
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, createdAt])
+}
+
+model WeighbridgeTicket {
+  id              String   @id @default(uuid())
+  ticketNumber    String   @unique
+  truckPlateNumber String
+  equipmentId     String?
+  driverName      String?
+  operatorId      String?
+  weighmasterId   String?
+  weighmasterName String?
+  inTime          DateTime
+  outTime         DateTime
+  grossWeight     Decimal
+  tareWeight      Decimal
+  netWeight       Decimal
+  unit            String   @default("Ton")
+  materialId      String
+  siteId          String
+  pitId           String
+  destination     String?
+  dataSource      String   @default("MANUAL_AUDITED")
+  documentUrl     String?
+  status          String   @default("VERIFIED")
+  productionRecordId String?
+  isReconciled    Boolean  @default(false)
+  notes           String?
+  cancelledReason String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([siteId, ticketNumber])
+  @@index([inTime, siteId])
+}
+
+model DocumentStorage {
+  id           String   @id @default(uuid())
+  fileName     String
+  fileSize     Int
+  mimeType     String
+  storagePath  String
+  url          String
+  category     String   @default("GENERAL")
+  entityType   String
+  entityId     String?
+  siteId       String?
+  uploadedById String
+  createdAt    DateTime @default(now())
+
+  @@index([category, entityType, entityId])
+}
+
+model ProductionReconciliation {
+  id                    String   @id @default(uuid())
+  date                  DateTime
+  siteId                String
+  shiftId               String
+  materialId            String
+  totalTicketsWeight    Decimal
+  totalProductionWeight Decimal
+  weightDiscrepancy     Decimal
+  ticketsCount          Int      @default(0)
+  unlinkedTicketsCount  Int      @default(0)
+  duplicateTicketsCount Int      @default(0)
+  hasEstimatedData      Boolean  @default(false)
+  status                String   @default("BALANCED")
+  investigationNotes    String?
+  resolutionNotes       String?
+  resolvedById          String?
+  resolvedAt            DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([date, siteId, shiftId])
+}
+
+model PreventiveMaintenance {
+  id                  String    @id @default(uuid())
+  equipmentId         String
+  siteId              String
+  title               String
+  pmType              String    @default("SCHEDULED_PM")
+  scheduledDate       DateTime
+  hourMeterThreshold  Decimal?
+  currentHourMeter    Decimal?
+  componentsChecklist Json?
+  technicianName      String
+  assignedToId        String?
+  status              String    @default("SCHEDULED")
+  notes               String?
+  completionDate      DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([equipmentId, status])
+}
+
+model OperationalAlert {
+  id           String   @id @default(uuid())
+  siteId       String
+  alertType    String
+  severity     String   @default("MEDIUM")
+  title        String
+  message      String
+  entityType   String
+  entityId     String?
+  targetRoles  String[]
+  isResolved   Boolean  @default(false)
+  resolvedById String?
+  resolvedAt   DateTime?
+  actionNotes  String?
+  dedupKey     String   @unique
+  createdAt    DateTime @default(now())
+
+  @@index([siteId, isResolved, severity])
+}
+
